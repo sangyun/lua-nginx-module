@@ -2160,7 +2160,7 @@ ngx_http_lua_handle_exec(lua_State *L, ngx_http_request_t *r,
 
     if (ctx->exec_uri.data[0] == '@') {
         if (ctx->exec_args.len > 0) {
-            ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                           "query strings %V ignored when exec'ing "
                           "named location %V",
                           &ctx->exec_args, &ctx->exec_uri);
