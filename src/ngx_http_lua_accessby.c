@@ -100,8 +100,32 @@ ngx_http_lua_access_handler(ngx_http_request_t *r)
         rc = ctx->resume_handler(r);
         dd("wev handler returns %d", (int) rc);
 
-        if (rc == NGX_ERROR || rc == NGX_DONE || rc >= NGX_OK) {
+        if (rc == NGX_ERROR || rc == NGX_DONE || rc > NGX_OK) {
             return rc;
+        }
+
+        if (rc == NGX_OK) {
+            if (r->header_sent) {
+                dd("header already sent");
+
+                /* response header was already generated in access_by_lua*,
+                 * so it is no longer safe to proceed to later phases
+                 * which may generate responses again */
+
+                if (!ctx->eof) {
+                    dd("eof not yet sent");
+
+                    rc = ngx_http_lua_send_chain_link(r, ctx, NULL
+                                                     /* indicate last_buf */);
+                    if (rc == NGX_ERROR || rc > NGX_OK) {
+                        return rc;
+                    }
+                }
+
+                return NGX_HTTP_OK;
+            }
+
+            return NGX_OK;
         }
 
         return NGX_DECLINED;
@@ -146,19 +170,16 @@ ngx_http_lua_access_handler_inline(ngx_http_request_t *r)
     ngx_int_t                  rc;
     lua_State                 *L;
     ngx_http_lua_loc_conf_t   *llcf;
-    ngx_http_lua_main_conf_t  *lmcf;
 
     llcf = ngx_http_get_module_loc_conf(r, ngx_http_lua_module);
-    lmcf = ngx_http_get_module_main_conf(r, ngx_http_lua_module);
 
-    L = lmcf->lua;
+    L = ngx_http_lua_get_lua_vm(r, NULL);
 
     /*  load Lua inline script (w/ cache) sp = 1 */
-    rc = ngx_http_lua_cache_loadbuffer(L, llcf->access_src.value.data,
+    rc = ngx_http_lua_cache_loadbuffer(r, L, llcf->access_src.value.data,
                                        llcf->access_src.value.len,
                                        llcf->access_src_key,
-                                       "access_by_lua",
-                                       llcf->enable_code_cache ? 1 : 0);
+                                       "=access_by_lua");
 
     if (rc != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -176,7 +197,6 @@ ngx_http_lua_access_handler_file(ngx_http_request_t *r)
     ngx_str_t                  eval_src;
     lua_State                 *L;
     ngx_http_lua_loc_conf_t   *llcf;
-    ngx_http_lua_main_conf_t  *lmcf;
 
     llcf = ngx_http_get_module_loc_conf(r, ngx_http_lua_module);
 
@@ -192,19 +212,20 @@ ngx_http_lua_access_handler_file(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
-    lmcf = ngx_http_get_module_main_conf(r, ngx_http_lua_module);
-    L = lmcf->lua;
+    L = ngx_http_lua_get_lua_vm(r, NULL);
 
     /*  load Lua script file (w/ cache)        sp = 1 */
-    rc = ngx_http_lua_cache_loadfile(L, script_path, llcf->access_src_key,
-                                     llcf->enable_code_cache ? 1 : 0);
-
+    rc = ngx_http_lua_cache_loadfile(r, L, script_path, llcf->access_src_key);
     if (rc != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        if (rc < NGX_HTTP_SPECIAL_RESPONSE) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        return rc;
     }
 
     /*  make sure we have a valid code chunk */
-    assert(lua_isfunction(L, -1));
+    ngx_http_lua_assert(lua_isfunction(L, -1));
 
     return ngx_http_lua_access_by_chunk(L, r);
 }
@@ -237,7 +258,7 @@ ngx_http_lua_access_by_chunk(lua_State *L, ngx_http_request_t *r)
     lua_xmove(L, co, 1);
 
     /*  set closure's env table to new coroutine's globals table */
-    lua_pushvalue(co, LUA_GLOBALSINDEX);
+    ngx_http_lua_get_globals_table(co);
     lua_setfenv(co, -2);
 
     /*  save nginx request in coroutine globals table */
@@ -259,6 +280,9 @@ ngx_http_lua_access_by_chunk(lua_State *L, ngx_http_request_t *r)
     ctx->cur_co_ctx = &ctx->entry_co_ctx;
     ctx->cur_co_ctx->co = co;
     ctx->cur_co_ctx->co_ref = co_ref;
+#ifdef NGX_LUA_USE_ASSERT
+    ctx->cur_co_ctx->co_top = 1;
+#endif
 
     /*  }}} */
 
@@ -290,7 +314,7 @@ ngx_http_lua_access_by_chunk(lua_State *L, ngx_http_request_t *r)
 
     dd("returned %d", (int) rc);
 
-    if (rc == NGX_ERROR || rc >= NGX_OK) {
+    if (rc == NGX_ERROR || rc > NGX_OK) {
         return rc;
     }
 
@@ -299,24 +323,53 @@ ngx_http_lua_access_by_chunk(lua_State *L, ngx_http_request_t *r)
     if (rc == NGX_AGAIN) {
         rc = ngx_http_lua_run_posted_threads(c, L, r, ctx);
 
-        if (rc == NGX_ERROR || rc == NGX_DONE || rc >= NGX_OK) {
+        if (rc == NGX_ERROR || rc == NGX_DONE || rc > NGX_OK) {
             return rc;
         }
 
-        return NGX_DECLINED;
-    }
+        if (rc != NGX_OK) {
+            return NGX_DECLINED;
+        }
 
-    if (rc == NGX_DONE) {
+    } else if (rc == NGX_DONE) {
         ngx_http_lua_finalize_request(r, NGX_DONE);
 
         rc = ngx_http_lua_run_posted_threads(c, L, r, ctx);
 
-        if (rc == NGX_ERROR || rc == NGX_DONE || rc >= NGX_OK) {
+        if (rc == NGX_ERROR || rc == NGX_DONE || rc > NGX_OK) {
             return rc;
         }
 
-        return NGX_DECLINED;
+        if (rc != NGX_OK) {
+            return NGX_DECLINED;
+        }
     }
+
+#if 1
+    if (rc == NGX_OK) {
+        if (r->header_sent) {
+            dd("header already sent");
+
+            /* response header was already generated in access_by_lua*,
+             * so it is no longer safe to proceed to later phases
+             * which may generate responses again */
+
+            if (!ctx->eof) {
+                dd("eof not yet sent");
+
+                rc = ngx_http_lua_send_chain_link(r, ctx, NULL
+                                                  /* indicate last_buf */);
+                if (rc == NGX_ERROR || rc > NGX_OK) {
+                    return rc;
+                }
+            }
+
+            return NGX_HTTP_OK;
+        }
+
+        return NGX_OK;
+    }
+#endif
 
     return NGX_DECLINED;
 }

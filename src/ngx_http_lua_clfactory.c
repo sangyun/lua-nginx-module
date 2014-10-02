@@ -223,22 +223,48 @@
  * ---------------------
 */
 
-/* bytecode for luajit */
-#define    LJ_LITTLE_ENDIAN_CODE_STRIPPED                               \
+/* bytecode for luajit 2.0 */
+
+#define    LJ20_LITTLE_ENDIAN_CODE_STRIPPED                             \
     "\x14\x03\x00\x01\x00\x01\x00\x03"                                  \
     "\x31\x00\x00\x00\x30\x00\x00\x80\x48\x00\x02\x00"                  \
     "\x00\x00"
-#define    LJ_BIG_ENDIAN_CODE_STRIPPED                                  \
+
+#define    LJ20_BIG_ENDIAN_CODE_STRIPPED                                \
     "\x14\x03\x00\x01\x00\x01\x00\x03"                                  \
     "\x00\x00\x00\x31\x80\x00\x00\x30\x00\x02\x00\x48"                  \
     "\x00\x00"
-#define    LJ_LITTLE_ENDIAN_CODE                                        \
+
+#define    LJ20_LITTLE_ENDIAN_CODE                                      \
     "\x15\x03\x00\x01\x00\x01\x00\x03\x00"                              \
     "\x31\x00\x00\x00\x30\x00\x00\x80\x48\x00\x02\x00"                  \
     "\x00\x00"
-#define    LJ_BIG_ENDIAN_CODE                                           \
+
+#define    LJ20_BIG_ENDIAN_CODE                                         \
     "\x15\x03\x00\x01\x00\x01\x00\x03\x00"                              \
     "\x00\x00\x00\x31\x80\x00\x00\x30\x00\x02\x00\x48"                  \
+    "\x00\x00"
+
+/* bytecode for luajit 2.1 */
+
+#define    LJ21_LITTLE_ENDIAN_CODE_STRIPPED                                  \
+    "\x14\x03\x00\x01\x00\x01\x00\x03"                                       \
+    "\x33\x00\x00\x00\x32\x00\x00\x80\x4c\x00\x02\x00"                       \
+    "\x00\x00"
+
+#define    LJ21_BIG_ENDIAN_CODE_STRIPPED                                     \
+    "\x14\x03\x00\x01\x00\x01\x00\x03"                                       \
+    "\x00\x00\x00\x33\x80\x00\x00\x32\x00\x02\x00\x4c"                       \
+    "\x00\x00"
+
+#define    LJ21_LITTLE_ENDIAN_CODE                                           \
+    "\x15\x03\x00\x01\x00\x01\x00\x03\x00"                                   \
+    "\x33\x00\x00\x00\x32\x00\x00\x80\x4c\x00\x02\x00"                       \
+    "\x00\x00"
+
+#define    LJ21_BIG_ENDIAN_CODE                                              \
+    "\x15\x03\x00\x01\x00\x01\x00\x03\x00"                                   \
+    "\x00\x00\x00\x33\x80\x00\x00\x32\x00\x02\x00\x4c"                       \
     "\x00\x00"
 
 #define    LJ_CODE_LEN              23
@@ -246,7 +272,8 @@
 #define    LJ_HEADERSIZE            5
 #define    LJ_BCDUMP_F_BE           0x01
 #define    LJ_BCDUMP_F_STRIP        0x02
-#define    LJ_BCDUMP_VERSION        1
+#define    LJ21_BCDUMP_VERSION        2
+#define    LJ20_BCDUMP_VERSION        1
 #define    LJ_SIGNATURE             "\x1b\x4c\x4a"
 
 
@@ -255,6 +282,11 @@ typedef enum {
     NGX_LUA_BT_LUA,
     NGX_LUA_BT_LJ
 } ngx_http_lua_clfactory_file_type_e;
+
+
+enum {
+    NGX_LUA_READER_BUFSIZE = 4096
+};
 
 
 typedef struct {
@@ -275,7 +307,7 @@ typedef struct {
         char   *ptr;
         char    str[MAX_END_CODE_SIZE];
     }           end_code;
-    char        buff[LUAL_BUFFERSIZE];
+    char        buff[NGX_LUA_READER_BUFSIZE];
 } ngx_http_lua_clfactory_file_ctx_t;
 
 
@@ -303,7 +335,7 @@ ngx_http_lua_clfactory_bytecode_prepare(lua_State *L,
     int                 x = 1, size_of_int, size_of_size_t, little_endian,
                         size_of_inst, version, stripped;
     static int          num_of_inst = 3, num_of_inter_func = 1;
-    const char         *filename, *emsg, *serr, *bytecode;
+    const char         *emsg, *serr, *bytecode;
     size_t              size, bytecode_len;
     long                fsize;
 
@@ -322,9 +354,10 @@ ngx_http_lua_clfactory_bytecode_prepare(lua_State *L,
 
         version = *(lf->begin_code.str + 3);
 
+        dd("version: %d", (int) version);
+
         if (ngx_memcmp(lf->begin_code.str, LJ_SIGNATURE,
-                       sizeof(LJ_SIGNATURE) - 1)
-            || version != LJ_BCDUMP_VERSION)
+                       sizeof(LJ_SIGNATURE) - 1))
         {
             emsg = "bad byte-code header";
             goto error;
@@ -345,25 +378,55 @@ ngx_http_lua_clfactory_bytecode_prepare(lua_State *L,
         little_endian = !((*(lf->begin_code.str + 4)) & LJ_BCDUMP_F_BE);
         stripped = (*(lf->begin_code.str + 4)) & LJ_BCDUMP_F_STRIP;
 
-        if (stripped) {
-            if (little_endian) {
-                lf->end_code.ptr = LJ_LITTLE_ENDIAN_CODE_STRIPPED;
+        dd("stripped: %d", (int) stripped);
+
+        if (version == LJ21_BCDUMP_VERSION) {
+            if (stripped) {
+                if (little_endian) {
+                    lf->end_code.ptr = LJ21_LITTLE_ENDIAN_CODE_STRIPPED;
+
+                } else {
+                    lf->end_code.ptr = LJ21_BIG_ENDIAN_CODE_STRIPPED;
+                }
+
+                lf->end_code_len = LJ_CODE_LEN_STRIPPED;
 
             } else {
-                lf->end_code.ptr = LJ_BIG_ENDIAN_CODE_STRIPPED;
+                if (little_endian) {
+                    lf->end_code.ptr = LJ21_LITTLE_ENDIAN_CODE;
+
+                } else {
+                    lf->end_code.ptr = LJ21_BIG_ENDIAN_CODE;
+                }
+
+                lf->end_code_len = LJ_CODE_LEN;
             }
 
-            lf->end_code_len = LJ_CODE_LEN_STRIPPED;
+        } else if (version == LJ20_BCDUMP_VERSION) {
+            if (stripped) {
+                if (little_endian) {
+                    lf->end_code.ptr = LJ20_LITTLE_ENDIAN_CODE_STRIPPED;
+
+                } else {
+                    lf->end_code.ptr = LJ20_BIG_ENDIAN_CODE_STRIPPED;
+                }
+
+                lf->end_code_len = LJ_CODE_LEN_STRIPPED;
+
+            } else {
+                if (little_endian) {
+                    lf->end_code.ptr = LJ20_LITTLE_ENDIAN_CODE;
+
+                } else {
+                    lf->end_code.ptr = LJ20_BIG_ENDIAN_CODE;
+                }
+
+                lf->end_code_len = LJ_CODE_LEN;
+            }
 
         } else {
-            if (little_endian) {
-                lf->end_code.ptr = LJ_LITTLE_ENDIAN_CODE;
-
-            } else {
-                lf->end_code.ptr = LJ_BIG_ENDIAN_CODE;
-            }
-
-            lf->end_code_len = LJ_CODE_LEN;
+            emsg = "bytecode format version unsupported";
+            goto error;
         }
 
         fsize = ngx_http_lua_clfactory_file_size(lf->f);
@@ -519,13 +582,11 @@ error:
 
     fclose(lf->f);  /* close file (even in case of errors) */
 
-    filename = lua_tostring(L, fname_index) + 1;
-
     if (serr) {
-        lua_pushfstring(L, "%s in %s: %s", emsg, filename, serr);
+        lua_pushfstring(L, "%s: %s", emsg, serr);
 
     } else {
-        lua_pushfstring(L, "%s in %s", emsg, filename);
+        lua_pushstring(L, emsg);
     }
 
     lua_remove(L, fname_index);
@@ -534,7 +595,7 @@ error:
 }
 
 
-int
+ngx_int_t
 ngx_http_lua_clfactory_loadfile(lua_State *L, const char *filename)
 {
     int                         c, status, readstatus;
@@ -656,7 +717,7 @@ ngx_http_lua_clfactory_loadfile(lua_State *L, const char *filename)
 }
 
 
-int
+ngx_int_t
 ngx_http_lua_clfactory_loadbuffer(lua_State *L, const char *buff,
     size_t size, const char *name)
 {
@@ -701,8 +762,11 @@ ngx_http_lua_clfactory_getF(lua_State *L, void *ud, size_t *size)
         return buf;
     }
 
-    if (feof(lf->f)) {
+    num = fread(lf->buff, 1, sizeof(lf->buff), lf->f);
 
+    dd("fread returned %d", (int) num);
+
+    if (num == 0) {
         if (lf->sent_end == 0) {
             lf->sent_end = 1;
             *size = lf->end_code_len;
@@ -717,13 +781,13 @@ ngx_http_lua_clfactory_getF(lua_State *L, void *ud, size_t *size)
             return buf;
         }
 
+        *size = 0;
         return NULL;
     }
 
-    num = fread(lf->buff, 1, sizeof(lf->buff), lf->f);
+    if (lf->file_type == NGX_LUA_BT_LJ) {
+        /* skip the footer(\x00) in luajit */
 
-    /* skip the footer(\x00) in luajit */
-    if (num > 0 && lf->file_type == NGX_LUA_BT_LJ) {
         lf->rest_len -= num;
 
         if (lf->rest_len == 0) {
@@ -738,8 +802,7 @@ ngx_http_lua_clfactory_getF(lua_State *L, void *ud, size_t *size)
     }
 
     *size = num;
-
-    return (*size > 0) ? lf->buff : NULL;
+    return lf->buff;
 }
 
 

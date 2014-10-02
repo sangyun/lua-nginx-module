@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -10,7 +10,7 @@ log_level('warn');
 repeat_each(2);
 #repeat_each(1);
 
-plan tests => repeat_each() * (blocks() * 2 + 16);
+plan tests => repeat_each() * (blocks() * 2 + 17);
 
 no_root_location();
 
@@ -435,7 +435,7 @@ foo: /bar?hello
         #set $args 'hello';
         rewrite_by_lua '
             local res, err = pcall(ngx.req.set_uri, "")
-            ngx.say("err: ", err)
+            print("rewrite: err: ", err)
         ';
         content_by_lua '
             ngx.say("foo: ", ngx.var.uri, "?", ngx.var.args)
@@ -444,8 +444,11 @@ foo: /bar?hello
 --- request
     GET /foo?world
 --- response_body
-err: attempt to use zero-length uri
 foo: /foo?world
+--- log_level: info
+--- grep_error_log eval: qr/rewrite: .+?(?=,)/
+--- grep_error_log_out
+rewrite: err: attempt to use zero-length uri
 
 
 

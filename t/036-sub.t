@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -9,7 +9,7 @@ use t::TestNginxLua;
 
 repeat_each(2);
 
-plan tests => repeat_each() * (blocks() * 2 + 13);
+plan tests => repeat_each() * (blocks() * 2 + 15);
 
 #no_diff();
 no_long_string();
@@ -323,6 +323,7 @@ hello, 34
 false
 bad argument #3 to '?' (string, number, or function expected, got boolean)
 nil
+--- SKIP
 
 
 
@@ -346,6 +347,7 @@ hello, 724
 
 
 === TEST 18: bad function return value type
+--- SKIP
 --- config
     location /re {
         content_by_lua '
@@ -417,6 +419,10 @@ a [b c] [b] [c] [] [] d
 --- response_body
 a [b c] [b] [c] d
 1
+--- no_error_log
+[error]
+[alert]
+--- timeout: 5
 
 
 

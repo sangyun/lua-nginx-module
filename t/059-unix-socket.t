@@ -1,11 +1,11 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 repeat_each(2);
 
-plan tests => blocks() * repeat_each() * 2;
+plan tests => repeat_each() * (blocks() * 2 + 1);
 
 $ENV{TEST_NGINX_HTML_DIR} ||= html_dir();
 
@@ -43,21 +43,13 @@ connect: nil no such file or directory
 send: nil closed
 receive: nil closed
 close: nil closed
+--- error_log eval
+qr{\[crit\] .*? connect\(\) to unix:/tmp/nosuchfile\.sock failed}
+
 
 
 
 === TEST 2: invalid host argument
---- http_server
-    server {
-        listen /tmp/test-nginx.sock;
-        default_type 'text/plain';
-
-        server_tokens off;
-        location /foo {
-            echo foo;
-            more_clear_headers Date;
-        }
-    }
 --- config
     location /test {
         content_by_lua '
@@ -142,5 +134,5 @@ received: Connection: close
 received: 
 received: foo
 failed to receive a line: closed
-close: nil closed
+close: 1 nil
 

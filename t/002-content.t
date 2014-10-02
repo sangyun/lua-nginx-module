@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -797,10 +797,10 @@ v = ngx.var["request_uri"]
 ngx.print("request_uri: ", v, "\n")
 --- request
 GET /lua?a=1&b=2
---- response_body_like: 500 Internal Server Error
---- error_code: 500
+--- response_body_like: 404 Not Found
+--- error_code: 404
 --- error_log eval
-qr/failed to load external Lua file: cannot open .*? No such file or directory/
+qr/failed to load external Lua file ".*?test2\.lua": cannot open .*? No such file or directory/
 
 
 

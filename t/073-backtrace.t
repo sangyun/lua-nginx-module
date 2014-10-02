@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -64,7 +64,7 @@ stack traceback:
  in function 'error'
 : in function 'bar'
 :5: in function 'foo'
-:7: in function <[string "content_by_lua"]:1>
+:7: in function <content_by_lua:1>
 
 
 

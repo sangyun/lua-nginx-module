@@ -1,7 +1,7 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_process_enabled(1);
@@ -9,7 +9,7 @@ use t::TestNginxLua;
 
 repeat_each(2);
 
-plan tests => repeat_each() * (2 * blocks() + 20);
+plan tests => repeat_each() * (2 * blocks() + 21);
 
 #no_diff();
 #no_long_string();
@@ -319,6 +319,7 @@ Foo 3: nil
 --- config
     location /foo {
         content_by_lua '
+            collectgarbage()
             local vals = ngx.req.get_headers()["Foo"]
             ngx.say("value is of type ", type(vals), ".")
             if type(vals) == "table" then
@@ -419,7 +420,7 @@ while ($i <= 98) {
     push @k, "x-$i";
     $i++;
 }
-push @k, "connection: Close\n";
+push @k, "connection: close\n";
 push @k, "host: localhost\n";
 @k = sort @k;
 for my $k (@k) {
@@ -467,7 +468,7 @@ while ($i <= 100) {
     push @k, "x-$i";
     $i++;
 }
-push @k, "connection: Close\n";
+push @k, "connection: close\n";
 push @k, "host: localhost\n";
 @k = sort @k;
 for my $k (@k) {
@@ -515,7 +516,7 @@ while ($i <= 105) {
     push @k, "x-$i";
     $i++;
 }
-push @k, "connection: Close\n";
+push @k, "connection: close\n";
 push @k, "host: localhost\n";
 @k = sort @k;
 for my $k (@k) {
@@ -757,7 +758,7 @@ Bar: baz
 Host: localhost
 Bar: baz
 My-Foo: bar
-Connection: Close
+Connection: close
 
 
 
@@ -1063,7 +1064,7 @@ Bar: baz
 Host: localhost
 Bar: baz
 My-Foo: bar
-Connection: Close
+Connection: close
 --- no_error_log
 [error]
 
@@ -1400,6 +1401,30 @@ Cookie: test=cookie;\r
 --- response_body
 got 8 headers
 got 8 headers
+--- no_error_log
+[error]
+
+
+
+=== TEST 45: github issue #314: ngx.req.set_header does not override request headers with multiple values
+--- config
+    #lua_code_cache off;
+    location = /t {
+        content_by_lua '
+            ngx.req.set_header("AAA", "111")
+            local headers = ngx.req.get_headers()
+            ngx.say(headers["AAA"])
+        ';
+    }
+--- request
+GET /t
+--- more_headers
+AAA: 123
+AAA: 456
+AAA: 678
+
+--- response_body
+111
 --- no_error_log
 [error]
 

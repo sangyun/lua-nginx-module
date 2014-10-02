@@ -22,7 +22,7 @@ BEGIN {
 }
 
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 use t::StapThread;
 
 our $GCScript = $t::StapThread::GCScript;
@@ -177,7 +177,7 @@ M(timer-expire) {
     }
 }
 
-F(ngx_http_lua_tcp_socket_cleanup) {
+F(ngx_http_lua_coctx_cleanup) {
     println("lua tcp socket cleanup")
 }
 
@@ -204,9 +204,9 @@ add timer 100
 add timer 200
 expire timer 100
 terminate 2: ok
+delete thread 2
 lua flush cleanup
 delete timer 200
-delete thread 2
 delete thread 1
 add timer 200
 expire timer 200

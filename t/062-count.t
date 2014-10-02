@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -35,7 +35,7 @@ __DATA__
 --- request
 GET /test
 --- response_body
-ngx: 96
+ngx: 99
 --- no_error_log
 [error]
 
@@ -56,7 +56,7 @@ ngx: 96
 --- request
 GET /test
 --- response_body
-96
+99
 --- no_error_log
 [error]
 
@@ -84,7 +84,7 @@ GET /test
 --- request
 GET /test
 --- response_body
-n = 96
+n = 99
 --- no_error_log
 [error]
 
@@ -301,7 +301,7 @@ GET /t
 --- response_body_like: 404 Not Found
 --- error_code: 404
 --- error_log
-ngx. entry count: 96
+ngx. entry count: 99
 
 
 
@@ -339,7 +339,7 @@ n = 1
 --- request
 GET /test
 --- response_body
-n = 2
+n = 5
 --- no_error_log
 [error]
 
@@ -414,7 +414,27 @@ probe process("$LIBLUA_PATH").function("rehashtab") {
 }
 --- stap_out2
 --- response_body
-thread: 2
+thread: 3
+--- no_error_log
+[error]
+
+
+
+=== TEST 19: entries under ngx.worker
+--- config
+        location = /test {
+            content_by_lua '
+                local n = 0
+                for k, v in pairs(ngx.worker) do
+                    n = n + 1
+                end
+                ngx.say("worker: ", n)
+            ';
+        }
+--- request
+GET /test
+--- response_body
+worker: 2
 --- no_error_log
 [error]
 
