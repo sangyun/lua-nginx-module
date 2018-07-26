@@ -35,6 +35,7 @@ __DATA__
     location /load {
         content_by_lua '
             package.loaded.foo = nil;
+            collectgarbage()
             local foo = require "foo";
             foo.hi()
         ';
@@ -208,4 +209,3 @@ GET /ndk
 GET /ndk
 --- response_body
 %20
-

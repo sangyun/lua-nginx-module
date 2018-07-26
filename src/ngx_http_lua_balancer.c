@@ -33,6 +33,10 @@ struct ngx_http_lua_balancer_peer_data_s {
     in_port_t                           port;
 
     int                                 last_peer_state;
+
+#if !(HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+    unsigned                            cloned_upstream_conf;  /* :1 */
+#endif
 };
 
 
@@ -128,7 +132,7 @@ ngx_http_lua_balancer_by_lua(ngx_conf_t *cf, ngx_command_t *cmd,
 
     dd("enter");
 
-    /*  must specifiy a content handler */
+    /*  must specify a content handler */
     if (cmd->post == NULL) {
         return NGX_CONF_ERROR;
     }
@@ -169,13 +173,15 @@ ngx_http_lua_balancer_by_lua(ngx_conf_t *cf, ngx_command_t *cmd,
 
         lscf->balancer.src = value[1];
 
-        p = ngx_palloc(cf->pool, NGX_HTTP_LUA_INLINE_KEY_LEN + 1);
+        p = ngx_palloc(cf->pool,
+                       sizeof("balancer_by_lua") + NGX_HTTP_LUA_INLINE_KEY_LEN);
         if (p == NULL) {
             return NGX_CONF_ERROR;
         }
 
         lscf->balancer.src_key = p;
 
+        p = ngx_copy(p, "balancer_by_lua", sizeof("balancer_by_lua") - 1);
         p = ngx_copy(p, NGX_HTTP_LUA_INLINE_TAG, NGX_HTTP_LUA_INLINE_TAG_LEN);
         p = ngx_http_lua_digest_hex(p, value[1].data, value[1].len);
         *p = '\0';
@@ -310,7 +316,13 @@ ngx_http_lua_balancer_get_peer(ngx_peer_connection_t *pc, void *data)
 
     if (ctx->exited && ctx->exit_code != NGX_OK) {
         rc = ctx->exit_code;
-        if (rc == NGX_ERROR || rc == NGX_BUSY || rc == NGX_DECLINED) {
+        if (rc == NGX_ERROR
+            || rc == NGX_BUSY
+            || rc == NGX_DECLINED
+#ifdef HAVE_BALANCER_STATUS_CODE_PATCH
+            || rc >= NGX_HTTP_SPECIAL_RESPONSE
+#endif
+        ) {
             return rc;
         }
 
@@ -372,7 +384,7 @@ ngx_http_lua_balancer_by_chunk(lua_State *L, ngx_http_request_t *r)
     dd("rc == %d", (int) rc);
 
     if (rc != 0) {
-        /*  error occured when running loaded code */
+        /*  error occurred when running loaded code */
         err_msg = (u_char *) lua_tolstring(L, -1, &len);
 
         if (err_msg == NULL) {
@@ -537,11 +549,106 @@ ngx_http_lua_ffi_balancer_set_current_peer(ngx_http_request_t *r,
 
 
 int
+ngx_http_lua_ffi_balancer_set_timeouts(ngx_http_request_t *r,
+    long connect_timeout, long send_timeout, long read_timeout,
+    char **err)
+{
+    ngx_http_lua_ctx_t    *ctx;
+    ngx_http_upstream_t   *u;
+
+#if !(HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+    ngx_http_upstream_conf_t           *ucf;
+#endif
+    ngx_http_lua_main_conf_t           *lmcf;
+    ngx_http_lua_balancer_peer_data_t  *bp;
+
+    if (r == NULL) {
+        *err = "no request found";
+        return NGX_ERROR;
+    }
+
+    u = r->upstream;
+
+    if (u == NULL) {
+        *err = "no upstream found";
+        return NGX_ERROR;
+    }
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
+    if (ctx == NULL) {
+        *err = "no ctx found";
+        return NGX_ERROR;
+    }
+
+    if ((ctx->context & NGX_HTTP_LUA_CONTEXT_BALANCER) == 0) {
+        *err = "API disabled in the current context";
+        return NGX_ERROR;
+    }
+
+    lmcf = ngx_http_get_module_main_conf(r, ngx_http_lua_module);
+
+    bp = lmcf->balancer_peer_data;
+    if (bp == NULL) {
+        *err = "no upstream peer data found";
+        return NGX_ERROR;
+    }
+
+#if !(HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+    if (!bp->cloned_upstream_conf) {
+        /* we clone the upstream conf for the current request so that
+         * we do not affect other requests at all. */
+
+        ucf = ngx_palloc(r->pool, sizeof(ngx_http_upstream_conf_t));
+
+        if (ucf == NULL) {
+            *err = "no memory";
+            return NGX_ERROR;
+        }
+
+        ngx_memcpy(ucf, u->conf, sizeof(ngx_http_upstream_conf_t));
+
+        u->conf = ucf;
+        bp->cloned_upstream_conf = 1;
+
+    } else {
+        ucf = u->conf;
+    }
+#endif
+
+    if (connect_timeout > 0) {
+#if (HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+        u->connect_timeout = (ngx_msec_t) connect_timeout;
+#else
+        ucf->connect_timeout = (ngx_msec_t) connect_timeout;
+#endif
+    }
+
+    if (send_timeout > 0) {
+#if (HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+        u->send_timeout = (ngx_msec_t) send_timeout;
+#else
+        ucf->send_timeout = (ngx_msec_t) send_timeout;
+#endif
+    }
+
+    if (read_timeout > 0) {
+#if (HAVE_NGX_UPSTREAM_TIMEOUT_FIELDS)
+        u->read_timeout = (ngx_msec_t) read_timeout;
+#else
+        ucf->read_timeout = (ngx_msec_t) read_timeout;
+#endif
+    }
+
+    return NGX_OK;
+}
+
+
+int
 ngx_http_lua_ffi_balancer_set_more_tries(ngx_http_request_t *r,
     int count, char **err)
 {
 #if (nginx_version >= 1007005)
-    ngx_uint_t             max_tries;
+    ngx_uint_t             max_tries, total;
 #endif
     ngx_http_lua_ctx_t    *ctx;
     ngx_http_upstream_t   *u;
@@ -582,9 +689,10 @@ ngx_http_lua_ffi_balancer_set_more_tries(ngx_http_request_t *r,
 
 #if (nginx_version >= 1007005)
     max_tries = r->upstream->conf->next_upstream_tries;
+    total = bp->total_tries + r->upstream->peer.tries - 1;
 
-    if (bp->total_tries + count > max_tries) {
-        count = max_tries - bp->total_tries;
+    if (max_tries && total + count > max_tries) {
+        count = max_tries - total;
         *err = "reduced tries due to limit";
 
     } else {

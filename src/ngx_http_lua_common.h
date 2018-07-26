@@ -22,6 +22,19 @@
 #include <lauxlib.h>
 
 
+#if (NGX_PCRE)
+
+#include <pcre.h>
+
+#if (PCRE_MAJOR > 8) || (PCRE_MAJOR == 8 && PCRE_MINOR >= 21)
+#   define LUA_HAVE_PCRE_JIT 1
+#else
+#   define LUA_HAVE_PCRE_JIT 0
+#endif
+
+#endif
+
+
 #if !defined(nginx_version) || (nginx_version < 1006000)
 #error at least nginx 1.6.0 is required but found an older version
 #endif
@@ -39,6 +52,16 @@
 
 #if (!defined OPENSSL_NO_OCSP && defined SSL_CTRL_SET_TLSEXT_STATUS_REQ_CB)
 #   define NGX_HTTP_LUA_USE_OCSP 1
+#endif
+
+#ifndef NGX_HTTP_PERMANENT_REDIRECT
+#   define NGX_HTTP_PERMANENT_REDIRECT  308
+#endif
+
+#ifndef NGX_HAVE_SHA1
+#   if (nginx_version >= 1011002)
+#       define NGX_HAVE_SHA1  1
+#   endif
 #endif
 
 
@@ -59,20 +82,20 @@
 
 #define NGX_HTTP_LUA_INLINE_TAG "nhli_"
 
-#define NGX_HTTP_LUA_INLINE_TAG_LEN \
+#define NGX_HTTP_LUA_INLINE_TAG_LEN                                          \
     (sizeof(NGX_HTTP_LUA_INLINE_TAG) - 1)
 
-#define NGX_HTTP_LUA_INLINE_KEY_LEN \
+#define NGX_HTTP_LUA_INLINE_KEY_LEN                                          \
     (NGX_HTTP_LUA_INLINE_TAG_LEN + 2 * MD5_DIGEST_LENGTH)
 
 /* Nginx HTTP Lua File tag prefix */
 
 #define NGX_HTTP_LUA_FILE_TAG "nhlf_"
 
-#define NGX_HTTP_LUA_FILE_TAG_LEN \
+#define NGX_HTTP_LUA_FILE_TAG_LEN                                            \
     (sizeof(NGX_HTTP_LUA_FILE_TAG) - 1)
 
-#define NGX_HTTP_LUA_FILE_KEY_LEN \
+#define NGX_HTTP_LUA_FILE_KEY_LEN                                            \
     (NGX_HTTP_LUA_FILE_TAG_LEN + 2 * MD5_DIGEST_LENGTH)
 
 
@@ -96,17 +119,19 @@ typedef struct {
 
 
 /* must be within 16 bit */
-#define NGX_HTTP_LUA_CONTEXT_SET            0x001
-#define NGX_HTTP_LUA_CONTEXT_REWRITE        0x002
-#define NGX_HTTP_LUA_CONTEXT_ACCESS         0x004
-#define NGX_HTTP_LUA_CONTEXT_CONTENT        0x008
-#define NGX_HTTP_LUA_CONTEXT_LOG            0x010
-#define NGX_HTTP_LUA_CONTEXT_HEADER_FILTER  0x020
-#define NGX_HTTP_LUA_CONTEXT_BODY_FILTER    0x040
-#define NGX_HTTP_LUA_CONTEXT_TIMER          0x080
-#define NGX_HTTP_LUA_CONTEXT_INIT_WORKER    0x100
-#define NGX_HTTP_LUA_CONTEXT_BALANCER       0x200
-#define NGX_HTTP_LUA_CONTEXT_SSL_CERT       0x400
+#define NGX_HTTP_LUA_CONTEXT_SET            0x0001
+#define NGX_HTTP_LUA_CONTEXT_REWRITE        0x0002
+#define NGX_HTTP_LUA_CONTEXT_ACCESS         0x0004
+#define NGX_HTTP_LUA_CONTEXT_CONTENT        0x0008
+#define NGX_HTTP_LUA_CONTEXT_LOG            0x0010
+#define NGX_HTTP_LUA_CONTEXT_HEADER_FILTER  0x0020
+#define NGX_HTTP_LUA_CONTEXT_BODY_FILTER    0x0040
+#define NGX_HTTP_LUA_CONTEXT_TIMER          0x0080
+#define NGX_HTTP_LUA_CONTEXT_INIT_WORKER    0x0100
+#define NGX_HTTP_LUA_CONTEXT_BALANCER       0x0200
+#define NGX_HTTP_LUA_CONTEXT_SSL_CERT       0x0400
+#define NGX_HTTP_LUA_CONTEXT_SSL_SESS_STORE 0x0800
+#define NGX_HTTP_LUA_CONTEXT_SSL_SESS_FETCH 0x1000
 
 
 #ifndef NGX_LUA_NO_FFI_API
@@ -129,7 +154,7 @@ typedef struct ngx_http_lua_sema_mm_s  ngx_http_lua_sema_mm_t;
 typedef ngx_int_t (*ngx_http_lua_main_conf_handler_pt)(ngx_log_t *log,
     ngx_http_lua_main_conf_t *lmcf, lua_State *L);
 typedef ngx_int_t (*ngx_http_lua_srv_conf_handler_pt)(ngx_http_request_t *r,
-    ngx_http_lua_srv_conf_t *lmcf, lua_State *L);
+    ngx_http_lua_srv_conf_t *lscf, lua_State *L);
 
 
 typedef struct {
@@ -140,6 +165,7 @@ typedef struct {
 
 struct ngx_http_lua_main_conf_s {
     lua_State           *lua;
+    ngx_pool_cleanup_t  *vm_cleanup;
 
     ngx_str_t            lua_path;
     ngx_str_t            lua_cpath;
@@ -159,9 +185,16 @@ struct ngx_http_lua_main_conf_s {
     ngx_int_t            regex_cache_entries;
     ngx_int_t            regex_cache_max_entries;
     ngx_int_t            regex_match_limit;
+
+#if (LUA_HAVE_PCRE_JIT)
+    pcre_jit_stack      *jit_stack;
+#endif
+
 #endif
 
     ngx_array_t         *shm_zones;  /* of ngx_shm_zone_t* */
+
+    ngx_array_t         *shdict_zones; /* shm zones of "shdict" */
 
     ngx_array_t         *preload_hooks; /* of ngx_http_lua_preload_hook_t */
 
@@ -184,6 +217,18 @@ struct ngx_http_lua_main_conf_s {
 
     ngx_http_lua_sema_mm_t         *sema_mm;
 
+    ngx_uint_t           malloc_trim_cycle;  /* a cycle is defined as the number
+                                                of reqeusts */
+    ngx_uint_t           malloc_trim_req_count;
+
+#if nginx_version >= 1011011
+    /* the following 2 fields are only used by ngx.req.raw_headers() for now */
+    ngx_buf_t          **busy_buf_ptrs;
+    ngx_int_t            busy_buf_ptr_count;
+#endif
+
+    ngx_int_t            host_var_index;
+
     unsigned             requires_header_filter:1;
     unsigned             requires_body_filter:1;
     unsigned             requires_capture_filter:1;
@@ -191,16 +236,25 @@ struct ngx_http_lua_main_conf_s {
     unsigned             requires_access:1;
     unsigned             requires_log:1;
     unsigned             requires_shm:1;
+    unsigned             requires_capture_log:1;
 };
 
 
 union ngx_http_lua_srv_conf_u {
 #if (NGX_HTTP_SSL)
     struct {
-        ngx_http_lua_srv_conf_handler_pt     cert_handler;
-        ngx_str_t                            cert_src;
-        u_char                              *cert_src_key;
-    } ssl;
+        ngx_http_lua_srv_conf_handler_pt     ssl_cert_handler;
+        ngx_str_t                            ssl_cert_src;
+        u_char                              *ssl_cert_src_key;
+
+        ngx_http_lua_srv_conf_handler_pt     ssl_sess_store_handler;
+        ngx_str_t                            ssl_sess_store_src;
+        u_char                              *ssl_sess_store_src_key;
+
+        ngx_http_lua_srv_conf_handler_pt     ssl_sess_fetch_handler;
+        ngx_str_t                            ssl_sess_fetch_src;
+        u_char                              *ssl_sess_fetch_src_key;
+    } srv;
 #endif
 
     struct {
@@ -502,6 +556,7 @@ typedef struct ngx_http_lua_ctx_s {
                                                   socket */
     unsigned         acquired_raw_req_socket:1;  /* whether a raw req socket
                                                     is acquired */
+    unsigned         seen_body_data:1;
 } ngx_http_lua_ctx_t;
 
 

@@ -5,7 +5,7 @@ use Test::Nginx::Socket::Lua;
 repeat_each(2);
 #repeat_each(1);
 
-plan tests => blocks() * repeat_each() * 2;
+plan tests => repeat_each() * (blocks() * 2 + 4);
 
 #no_diff();
 #no_long_string();
@@ -377,3 +377,24 @@ ngx.exec("@proxy")
 --- response_body
 hello, bah
 
+
+
+=== TEST 17: pipelined requests
+--- config
+    location /t {
+        rewrite_by_lua_block {
+            ngx.exec("@foo")
+        }
+    }
+
+    location @foo {
+        return 200;
+    }
+--- pipelined_requests eval
+["GET /t", "GET /t"]
+--- error_code eval
+[200, 200]
+--- response_body eval
+["", ""]
+--- no_error_log
+[error]

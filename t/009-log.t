@@ -4,7 +4,7 @@ use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_process_enabled(1);
-log_level('debug'); # to ensure any log-level can be outputed
+log_level('debug'); # to ensure any log-level can be outputted
 
 repeat_each(2);
 
@@ -542,4 +542,3 @@ ok
 [error]
 --- error_log eval
 "2: hello\0world, client: "
-

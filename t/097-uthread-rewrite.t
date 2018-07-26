@@ -258,6 +258,7 @@ free request
 hello foo
 --- no_error_log
 [error]
+--- wait: 0.1
 
 
 
@@ -344,4 +345,3 @@ free request
 end
 --- error_log
 attempt to abort with pending subrequests
-

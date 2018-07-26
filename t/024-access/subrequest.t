@@ -409,7 +409,7 @@ cached: hello
 
 
 
-=== TEST 14: emtpy args option table
+=== TEST 14: empty args option table
 --- config
     location /foo {
         echo $query_string;
@@ -599,4 +599,3 @@ the nginx core requires the patch https://github.com/agentzh/ngx_openresty/blob/
     GET /t
 --- response_body
 done
-

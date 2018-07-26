@@ -427,7 +427,7 @@ cached: hello
 
 
 
-=== TEST 14: emtpy args option table
+=== TEST 14: empty args option table
 --- config
     location /foo {
         echo $query_string;
@@ -1119,7 +1119,11 @@ hello world
 --- config
     location /t {
         content_by_lua '
-            local args = ngx.req.get_uri_args()
+            local args, err = ngx.req.get_uri_args()
+            if err then
+                ngx.say("err: ", err)
+            end
+
             local res = ngx.location.capture("/sub", { args = args })
             ngx.print(res.body)
         ';
